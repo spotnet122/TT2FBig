@@ -4,7 +4,7 @@ TikTok -> Facebook Page (+ Instagram if linked) auto-poster.
 
 Flow:
   1. Round-robin across TIKTOK_PROFILES; for the current profile, fetch a
-     small page of videos via TikWM starting at that profile's saved
+     small page of videos via yt-dlp starting at that profile's saved
      cursor (never the whole list — cheap even for huge profiles).
   2. Dedupe against state.json (by tiktok video_id). Once a page is fully
      posted, the cursor moves past it, so nothing gets re-checked or
@@ -43,6 +43,7 @@ import time
 import argparse
 import pathlib
 import requests
+import yt_dlp
 
 # ---------------------------------------------------------------------------
 # Config
@@ -52,7 +53,7 @@ import requests
 # one in this list (wrapping back to the top). Add/remove/reorder freely —
 # just edit this list and commit.
 TIKTOK_PROFILES = [
-    "storyflix11",
+    "naturevibes689",
 ]
 
 FB_SYSTEM_USER_TOKEN = os.environ.get("FB_SYSTEM_USER_TOKEN", "")
@@ -126,46 +127,95 @@ def save_state(state):
 
 
 # ---------------------------------------------------------------------------
-# TikTok fetch (TikWM API — free, no auth)
+# TikTok fetch (yt-dlp — TikWM's API started returning 403 on GitHub Actions
+# IPs, so listing/caption/download all go through yt-dlp directly against
+# tiktok.com instead)
 # ---------------------------------------------------------------------------
-def fetch_tiktok_page(profile, cursor=0, count=PAGE_SIZE):
-    """Fetch ONE small page of a profile's videos starting at `cursor`.
-    Returns (videos, next_cursor, has_more)."""
-    url = "https://tikwm.com/api/user/posts"
-    params = {"unique_id": profile, "count": count, "cursor": cursor}
-    r = requests.get(url, params=params, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-    if data.get("code") != 0:
-        raise RuntimeError(f"TikWM error: {data}")
-    videos = [
-        {"id": v["video_id"], "caption": v.get("title", "").strip(), "play_url": v["play"]}
-        for v in data["data"]["videos"]
-    ]
-    next_cursor = data["data"].get("cursor", cursor + len(videos))
-    has_more = bool(data["data"].get("hasMore")) and bool(videos)
-    return videos, next_cursor, has_more
+def _ydl_opts(**extra):
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        # a normal-looking UA helps avoid TikTok's basic bot filtering
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+        },
+    }
+    opts.update(extra)
+    return opts
+
+
+def list_profile_videos(profile):
+    """Cheap flat listing of ALL video ids/urls for a profile (no per-video
+    metadata download). Order matches the profile's public feed (newest
+    first), which is what the `cursor` indexes into."""
+    url = f"https://www.tiktok.com/@{profile}"
+    with yt_dlp.YoutubeDL(_ydl_opts(extract_flat=True)) as ydl:
+        info = ydl.extract_info(url, download=False)
+    entries = info.get("entries") or []
+    videos = []
+    for e in entries:
+        vid = e.get("id")
+        if not vid:
+            continue
+        videos.append({
+            "id": vid,
+            "url": e.get("url") or e.get("webpage_url") or f"https://www.tiktok.com/@{profile}/video/{vid}",
+        })
+    return videos
+
+
+def fetch_video_meta(video_url):
+    """Full metadata for ONE video (needed for the caption) — only called
+    for videos we're actually about to consider posting, to keep this
+    cheap."""
+    with yt_dlp.YoutubeDL(_ydl_opts()) as ydl:
+        info = ydl.extract_info(video_url, download=False)
+    caption = (info.get("description") or info.get("title") or "").strip()
+    return {"caption": caption}
 
 
 def find_candidates(profile, pstate):
     """Walk forward from the profile's saved cursor, page by page (bounded
     by MAX_PAGES_PER_RUN), until it finds un-posted videos or confirms the
     profile is exhausted. Advances/saves pstate['cursor'] as it goes, so
-    fully-posted pages are never re-fetched on a later run."""
+    fully-posted pages are never re-scanned on a later run.
+
+    The full (flat, cheap) video list is fetched once per profile per run;
+    only videos that turn out to be un-posted get a full per-video
+    metadata fetch (for the caption)."""
+    all_videos = list_profile_videos(profile)
+    if not all_videos:
+        return [], True  # profile empty / unreachable -> treat as exhausted
+
+    total = len(all_videos)
+    cursor = pstate["cursor"]
+    posted = set(pstate["posted_ids"])
+
     for _ in range(MAX_PAGES_PER_RUN):
-        videos, next_cursor, has_more = fetch_tiktok_page(profile, pstate["cursor"])
-        if not videos:
+        if cursor >= total:
+            pstate["cursor"] = cursor
             return [], True  # exhausted
 
-        posted = set(pstate["posted_ids"])
-        candidates = [v for v in videos if v["id"] not in posted]
-        if candidates:
+        page = all_videos[cursor:cursor + PAGE_SIZE]
+        unposted = [v for v in page if v["id"] not in posted]
+
+        if unposted:
+            pstate["cursor"] = cursor  # don't advance past this page yet
+            candidates = []
+            for v in unposted:
+                meta = fetch_video_meta(v["url"])
+                candidates.append({"id": v["id"], "caption": meta["caption"], "url": v["url"]})
             return candidates, False  # found new videos, not exhausted
 
         # this whole page was already posted -> safe to move the cursor
         # past it and check the next page
-        pstate["cursor"] = next_cursor
-        if not has_more:
+        cursor += len(page)
+        pstate["cursor"] = cursor
+        if cursor >= total:
             return [], True  # exhausted
 
     # hit the per-run page bound without resolving -> not exhausted, just
@@ -173,12 +223,18 @@ def find_candidates(profile, pstate):
     return [], False
 
 
-def download_video(play_url, dest_path):
-    r = requests.get(play_url, stream=True, timeout=120)
-    r.raise_for_status()
-    with open(dest_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=1024 * 1024):
-            f.write(chunk)
+def download_video(video_url, dest_path):
+    """Download the highest-quality (HD, no watermark) version of a TikTok
+    video via yt-dlp straight to dest_path."""
+    opts = _ydl_opts(
+        skip_download=False,
+        outtmpl=str(dest_path),
+        format="bestvideo*+bestaudio/best",
+        format_sort=["res", "fps", "br"],
+        merge_output_format="mp4",
+    )
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([video_url])
     return dest_path
 
 
@@ -420,7 +476,7 @@ def upload_to_facebook(page_id, page_token, video_path, caption):
     with open(video_path, "rb") as f:
         files = {"source": f}
         data = {"description": caption, "access_token": page_token}
-        r = requests.post(url, files=files, data=data, timeout=300)
+        r = requests.post(url, files=files, data=data, timeout=600)
     r.raise_for_status()
     return r.json()
 
@@ -431,7 +487,7 @@ def upload_to_facebook(page_id, page_token, video_path, caption):
 def upload_to_uguu(video_path):
     with open(video_path, "rb") as f:
         files = {"files[]": f}
-        r = requests.post("https://uguu.se/upload", files=files, timeout=300)
+        r = requests.post("https://uguu.se/upload", files=files, timeout=600)
     r.raise_for_status()
     data = r.json()
     # response: {"success": true, "files": [{"url": "...", ...}]}
@@ -541,7 +597,7 @@ def main():
         print(f"\nVideo {vid} (@{profile})")
 
         try:
-            download_video(v["play_url"], video_path)
+            download_video(v["url"], video_path)
 
             caption = generate_caption(tt_caption, GROQ_API_KEY)
             print(f"Caption: {caption}")
