@@ -280,8 +280,7 @@ def get_page_token_and_ig(system_token, page_id):
 def generate_caption(original_caption, groq_key, model=GROQ_MODEL, max_words=15, max_attempts=3):
     base_prompt = (
         "You are a social media caption writer. You will be given the ORIGINAL "
-        "caption from a TikTok video (any topic/niche — news, devotional, motivation, "
-        "comedy, film clip, etc). Rewrite it for Facebook/Instagram in the SAME "
+        "caption from a TikTok video (any topic/niche — movie clips, film clip, etc). Rewrite it for Facebook/Instagram in the SAME "
         "language/tone as the original (if it's Hindi/Hinglish, reply in Hindi/Hinglish; "
         "if English, reply in English). Output in this EXACT format:\n\n"
         "<one punchy caption sentence>\n"
