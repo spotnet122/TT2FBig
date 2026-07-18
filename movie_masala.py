@@ -444,6 +444,13 @@ def upload_to_uguu(video_path):
 # ---------------------------------------------------------------------------
 # Buffer: create post (GraphQL API)
 # ---------------------------------------------------------------------------
+class BufferSchemaError(RuntimeError):
+    """Buffer GraphQL/schema-level error (bad field, bad enum, etc.) — this
+    will fail identically for every candidate, so callers should stop
+    immediately instead of burning downloads retrying the next video."""
+    pass
+
+
 def buffer_create_post(text, media_url=None, media_type=None):
     """media_type: None (text-only), "image", or "video"."""
     assets = []
@@ -456,7 +463,7 @@ def buffer_create_post(text, media_url=None, media_type=None):
     # metadata.facebook.type — without it Buffer rejects with "Facebook
     # posts require a type". Videos go as REEL (better organic reach than
     # a plain feed video); images go as a normal POST.
-    fb_type = "REEL" if media_type == "video" else "POST"
+    fb_type = "reel" if media_type == "video" else "post"
 
     query = """
     mutation CreatePost($input: CreatePostInput!) {
@@ -494,7 +501,7 @@ def buffer_create_post(text, media_url=None, media_type=None):
     r.raise_for_status()
     data = r.json()
     if data.get("errors"):
-        raise RuntimeError(f"Buffer GraphQL error: {data['errors']}")
+        raise BufferSchemaError(f"Buffer GraphQL error: {data['errors']}")
     result = data["data"]["createPost"]
     if "message" in result:
         raise RuntimeError(f"Buffer rejected the post: {result['message']}")
@@ -568,6 +575,11 @@ def main():
             save_state(state)
             posted = True
 
+        except BufferSchemaError as e:
+            print(f"Failed (Buffer schema/config error — same for every video, stopping run): {e}")
+            if video_path.exists():
+                video_path.unlink()
+            break
         except Exception as e:
             print(f"Failed: {e}")
         finally:
