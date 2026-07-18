@@ -1,0 +1,38 @@
+name: Movie Masala - TikTok Repost (Buffer)
+
+on:
+  schedule:
+    # 13:30 UTC = 19:00 IST (7 PM IST), once daily
+    - cron: '30 13 * * *'
+  workflow_dispatch: {}   # lets you trigger a manual run from the Actions tab
+
+permissions:
+  contents: write   # needed to commit updated dedupe/state.json back to the repo
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests yt-dlp
+
+      - name: Run poster
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID_MOVIE_MASALA }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python movie_masala.py
+
+      - name: Commit updated dedupe state
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update dedupe state [skip ci]"
+          file_pattern: 'dedupe/**'

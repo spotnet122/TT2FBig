@@ -1,0 +1,58 @@
+name: Nature Unfiltered - Image + Video (Buffer)
+
+on:
+  schedule:
+    # All times UTC (GitHub Actions cron is always UTC).
+    # Chosen to land in daytime hours across most timezones (global audience),
+    # not tied to IST specifically — adjust freely.
+    - cron: '0 9 * * *'    # image post #1 ("morning" global slot)
+    - cron: '0 18 * * *'   # image post #2 ("evening" global slot)
+    - cron: '0 13 * * *'   # video post (once daily)
+  workflow_dispatch: {}    # manual run — content type left to the script's own alternation
+
+permissions:
+  contents: write   # needed to commit updated dedupe/state.json + state/*.json back to the repo
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests yt-dlp Pillow
+
+      - name: Determine content type for this trigger
+        id: determine
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            case "${{ github.event.schedule }}" in
+              "0 9 * * *"|"0 18 * * *") echo "type=image" >> "$GITHUB_OUTPUT" ;;
+              "0 13 * * *") echo "type=video" >> "$GITHUB_OUTPUT" ;;
+            esac
+          fi
+          # workflow_dispatch (manual run) -> no type set, script alternates on its own
+
+      - name: Run poster
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          BUFFER_CHANNEL_ID: ${{ secrets.BUFFER_CHANNEL_ID_NATURE }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -n "${{ steps.determine.outputs.type }}" ]; then
+            python nature_unfiltered.py --force-type ${{ steps.determine.outputs.type }}
+          else
+            python nature_unfiltered.py
+          fi
+
+      - name: Commit updated state
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update posting state [skip ci]"
+          file_pattern: 'dedupe/** state/**'
