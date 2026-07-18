@@ -61,7 +61,7 @@ import yt_dlp
 # Config
 # ---------------------------------------------------------------------------
 TIKTOK_PROFILES = [
-    "storyflix11",
+    "uvtsch",
 ]
 
 BUFFER_API_KEY = os.environ.get("BUFFER_API_KEY", "")
