@@ -3,11 +3,11 @@
   "profiles": {
     "storyflix11": {
       "cursor": 0,
-      "posted_ids": []
+      "posted_ids": [
+        "7663186228841303328",
+        "7663508317964094751"
+      ]
     }
   },
-  "cursor": 0,
-  "posted_ids": [
-    "7663186228841303328"
-  ]
+  "cursor": 0
 }
