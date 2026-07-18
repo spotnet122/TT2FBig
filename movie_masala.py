@@ -248,7 +248,17 @@ def pick_fallback_caption():
 
 def generate_caption(original_caption, groq_key, model=GROQ_MODEL, max_words=15, max_attempts=3):
     original_caption = (original_caption or "").strip()
+
+    # yt-dlp falls back to a placeholder title "TikTok video #<video_id>" when
+    # a video has no real title/description. Strip that out first, otherwise
+    # the video-id gets mistaken for a real hashtag below.
+    original_caption = re.sub(r"(?i)^tiktok video\s*#?\d*$", "", original_caption).strip()
+
     hashtags_found = re.findall(r"#\w+", original_caption)
+    # Drop purely-numeric hashtags (e.g. "#7663508317964094751") — these are
+    # video-id artifacts, never a real topic tag.
+    hashtags_found = [h for h in hashtags_found if not h[1:].isdigit()]
+
     text_only = re.sub(r"#\w+", "", original_caption).strip()
     text_only = re.sub(r"\s{2,}", " ", text_only)
 
