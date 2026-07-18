@@ -107,10 +107,18 @@ def load_state():
 
     old_posted = state.pop("posted_ids", None)
     if old_posted:
-        for p, ids in old_posted.items():
+        if isinstance(old_posted, dict):
+            for p, ids in old_posted.items():
+                state["profiles"].setdefault(p, {"cursor": 0, "posted_ids": []})
+                existing = set(state["profiles"][p]["posted_ids"])
+                state["profiles"][p]["posted_ids"] = list(existing | set(ids))
+        elif isinstance(old_posted, list):
+            # Very old single-profile format: posted_ids was a flat list,
+            # belonging to whichever profile was configured back then.
+            p = TIKTOK_PROFILES[0]
             state["profiles"].setdefault(p, {"cursor": 0, "posted_ids": []})
             existing = set(state["profiles"][p]["posted_ids"])
-            state["profiles"][p]["posted_ids"] = list(existing | set(ids))
+            state["profiles"][p]["posted_ids"] = list(existing | set(old_posted))
 
     for p in TIKTOK_PROFILES:
         state["profiles"].setdefault(p, {"cursor": 0, "posted_ids": []})
