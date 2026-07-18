@@ -53,6 +53,7 @@ import json
 import time
 import argparse
 import pathlib
+import random
 import requests
 import yt_dlp
 
@@ -215,7 +216,52 @@ def download_video(video_url, dest_path):
 # ---------------------------------------------------------------------------
 # Groq: niche-agnostic caption rewrite
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Fallback captions — used ONLY when the original TikTok caption has no
+# usable text AND no hashtags (nothing for Groq to work with at all).
+# ---------------------------------------------------------------------------
+FALLBACK_CAPTIONS = [
+    "Every scene tells a story worth watching.\n\n#MovieMoments #FilmClips #CinemaLovers #MustWatch #ScreenTime",
+    "This is the kind of moment movies are made for.\n\n#MovieMagic #FilmLovers #CinemaClips #Hollywood #MustWatch",
+    "Some scenes stay with you long after the credits roll.\n\n#ClassicMovies #FilmClips #CinemaLovers #MovieScenes #Unforgettable",
+    "Great storytelling never goes out of style.\n\n#MovieMoments #FilmBuff #CinemaLovers #ClassicFilm #Storytelling",
+    "A single scene, a thousand emotions.\n\n#FilmClips #MovieMagic #CinemaMoments #Hollywood #MustWatch",
+    "This is why we fell in love with cinema.\n\n#MovieLovers #FilmClips #ClassicCinema #Hollywood #ScreenMoments",
+    "Some stories deserve to be watched again and again.\n\n#MovieMoments #FilmClips #CinemaLovers #Rewatch #Hollywood",
+    "The best scenes speak louder than words.\n\n#FilmMagic #MovieClips #CinemaLovers #Hollywood #Storytelling",
+    "Cinema at its finest, one scene at a time.\n\n#MovieMoments #FilmLovers #ClassicCinema #Hollywood #MustWatch",
+    "A moment worth pausing for.\n\n#FilmClips #MovieMagic #CinemaLovers #Hollywood #ScreenMoments",
+]
+
+
+def pick_fallback_caption():
+    return random.choice(FALLBACK_CAPTIONS)
+
+
 def generate_caption(original_caption, groq_key, model=GROQ_MODEL, max_words=15, max_attempts=3):
+    original_caption = (original_caption or "").strip()
+    hashtags_found = re.findall(r"#\w+", original_caption)
+    text_only = re.sub(r"#\w+", "", original_caption).strip()
+    text_only = re.sub(r"\s{2,}", " ", text_only)
+
+    # Nothing usable at all — no text, no hashtags. Don't bother calling
+    # Groq (it would just invent generic filler); pick a ready-made caption.
+    if not text_only and not hashtags_found:
+        print("[INFO] No usable text or hashtags in source caption — using fallback caption.")
+        return pick_fallback_caption()
+
+    if not text_only and hashtags_found:
+        # No descriptive text, but hashtags give us a topic to work with.
+        source_block = (
+            "The original caption had NO descriptive sentence — only these "
+            "hashtags: " + " ".join(hashtags_found) + "\n"
+            "Use these hashtags ONLY as a clue to figure out the video's topic/theme, "
+            "then write a natural caption about that theme. Do not mention that "
+            "hashtags were your source."
+        )
+    else:
+        source_block = f"ORIGINAL CAPTION:\n{original_caption}"
+
     base_prompt = (
         "You are a social media caption writer. You will be given the ORIGINAL "
         "caption from a TikTok video (any topic/niche — movie clips, film clip, etc). Rewrite it for Facebook/Instagram in the SAME "
@@ -239,7 +285,7 @@ def generate_caption(original_caption, groq_key, model=GROQ_MODEL, max_words=15,
         "no # symbol duplicated.\n"
         "- Output ONLY the caption + hashtags, nothing else (no preamble, no quotes, "
         "no explanation).\n\n"
-        f"ORIGINAL CAPTION:\n{original_caption or '(no caption provided)'}"
+        f"{source_block}"
     )
 
     prompt = base_prompt
@@ -406,6 +452,12 @@ def buffer_create_post(text, media_url=None, media_type=None):
     elif media_type == "video" and media_url:
         assets = [{"video": {"url": media_url}}]
 
+    # Facebook requires an explicit post type (POST, STORY, or REEL) via
+    # metadata.facebook.type — without it Buffer rejects with "Facebook
+    # posts require a type". Videos go as REEL (better organic reach than
+    # a plain feed video); images go as a normal POST.
+    fb_type = "REEL" if media_type == "video" else "POST"
+
     query = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
@@ -425,6 +477,9 @@ def buffer_create_post(text, media_url=None, media_type=None):
             "schedulingType": "automatic",
             "mode": "addToQueue",
             "assets": assets,
+            "metadata": {
+                "facebook": {"type": fb_type}
+            },
         }
     }
     r = requests.post(
@@ -496,6 +551,7 @@ def main():
         try:
             download_video(v["url"], video_path)
 
+            print(f"Original TikTok caption: {tt_caption!r}")
             caption = generate_caption(tt_caption, GROQ_API_KEY)
             print(f"Caption: {caption}")
 

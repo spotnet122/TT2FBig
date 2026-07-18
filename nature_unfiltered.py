@@ -95,6 +95,12 @@ def buffer_create_post(text, media_url=None, media_type=None):
     elif media_type == "video" and media_url:
         assets = [{"video": {"url": media_url}}]
 
+    # Facebook requires an explicit post type (POST, STORY, or REEL) via
+    # metadata.facebook.type — without it Buffer rejects with "Facebook
+    # posts require a type". Videos go as REEL (better organic reach than
+    # a plain feed video); images go as a normal POST.
+    fb_type = "REEL" if media_type == "video" else "POST"
+
     query = """
     mutation CreatePost($input: CreatePostInput!) {
       createPost(input: $input) {
@@ -114,6 +120,9 @@ def buffer_create_post(text, media_url=None, media_type=None):
             "schedulingType": "automatic",
             "mode": "addToQueue",
             "assets": assets,
+            "metadata": {
+                "facebook": {"type": fb_type}
+            },
         }
     }
     r = requests.post(
@@ -870,7 +879,47 @@ def download_video(video_url, dest_path):
     return dest_path
 
 
+# Fallback captions — used ONLY when the original TikTok caption has no
+# usable text AND no hashtags (nothing for Groq to work with at all).
+VIDEO_FALLBACK_CAPTIONS = [
+    "Nature never stops putting on a show.\n\n#NatureLovers #EarthPix #WildEarth #NatureVibes #MustWatch",
+    "Some views make you forget everything else.\n\n#NatureVibes #EarthPix #WildEarth #NaturePhotography #MustWatch",
+    "This is the planet doing what it does best.\n\n#NatureLovers #WildEarth #EarthPix #NatureVibes #Breathtaking",
+    "Untouched, wild, and absolutely stunning.\n\n#NatureUnfiltered #WildEarth #EarthPix #NatureVibes #MustWatch",
+    "Moments like this remind you how wild the world is.\n\n#NatureLovers #EarthPix #WildEarth #NatureVibes #Untamed",
+    "The wild doesn't need a filter.\n\n#NatureUnfiltered #WildEarth #EarthPix #NatureVibes #Breathtaking",
+    "Earth really outdid itself with this one.\n\n#NatureLovers #EarthPix #WildEarth #NatureVibes #MustWatch",
+    "Pure, raw, untamed nature.\n\n#NatureUnfiltered #WildEarth #EarthPix #NatureVibes #Untamed",
+    "Some sights are worth stopping for.\n\n#NatureLovers #EarthPix #WildEarth #NatureVibes #Breathtaking",
+    "This is what wild really looks like.\n\n#NatureUnfiltered #WildEarth #EarthPix #NatureVibes #MustWatch",
+]
+
+
+def pick_video_fallback_caption():
+    return random.choice(VIDEO_FALLBACK_CAPTIONS)
+
+
 def generate_video_caption(original_caption, groq_key, model=VIDEO_GROQ_MODEL, max_words=15, max_attempts=3):
+    original_caption = (original_caption or "").strip()
+    hashtags_found = re.findall(r"#\w+", original_caption)
+    text_only = re.sub(r"#\w+", "", original_caption).strip()
+    text_only = re.sub(r"\s{2,}", " ", text_only)
+
+    if not text_only and not hashtags_found:
+        print("[INFO] No usable text or hashtags in source caption — using fallback caption.")
+        return pick_video_fallback_caption()
+
+    if not text_only and hashtags_found:
+        source_block = (
+            "The original caption had NO descriptive sentence — only these "
+            "hashtags: " + " ".join(hashtags_found) + "\n"
+            "Use these hashtags ONLY as a clue to figure out the video's topic/theme, "
+            "then write a natural caption about that theme. Do not mention that "
+            "hashtags were your source."
+        )
+    else:
+        source_block = f"ORIGINAL CAPTION:\n{original_caption}"
+
     base_prompt = (
         "You are a social media caption writer. You will be given the ORIGINAL "
         "caption from a TikTok video (any topic/niche — news, devotional, motivation, "
@@ -895,7 +944,7 @@ def generate_video_caption(original_caption, groq_key, model=VIDEO_GROQ_MODEL, m
         "no # symbol duplicated.\n"
         "- Output ONLY the caption + hashtags, nothing else (no preamble, no quotes, "
         "no explanation).\n\n"
-        f"ORIGINAL CAPTION:\n{original_caption or '(no caption provided)'}"
+        f"{source_block}"
     )
 
     prompt = base_prompt
@@ -1062,6 +1111,7 @@ def run_video_post(dry_run: bool) -> bool:
 
         try:
             download_video(v["url"], video_path)
+            print(f"Original TikTok caption: {tt_caption!r}")
             caption = generate_video_caption(tt_caption, GROQ_API_KEY)
             print(f"Caption: {caption}")
 
