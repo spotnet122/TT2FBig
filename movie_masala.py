@@ -504,7 +504,7 @@ def buffer_create_post(text, media_url=None, media_type=None):
             "text": text,
             "channelId": BUFFER_CHANNEL_ID,
             "schedulingType": "automatic",
-            "mode": "addToQueue",
+            "mode": "shareNow",
             "assets": assets,
             "metadata": {
                 "facebook": {"type": fb_type}
