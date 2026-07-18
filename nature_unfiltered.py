@@ -106,7 +106,11 @@ def buffer_create_post(text, media_url=None, media_type=None):
     # metadata.facebook.type — without it Buffer rejects with "Facebook
     # posts require a type". Videos go as REEL (better organic reach than
     # a plain feed video); images go as a normal POST.
-    fb_type = "reel" if media_type == "video" else "post"
+    # NOTE: Facebook Reels have strict constraints (duration <= 90s, min
+    # resolution 540x960) that reject a large share of TikTok reposts.
+    # Normal video posts don't have these limits, so everything posts as
+    # "post" type — same behavior as the original direct-Graph-API version.
+    fb_type = "post"
 
     query = """
     mutation CreatePost($input: CreatePostInput!) {
