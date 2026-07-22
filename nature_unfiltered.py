@@ -777,7 +777,7 @@ def run_image_post(dry_run: bool):
 # TYPE "video" — TikTok repost from @naturevibes689
 # ===========================================================================
 
-TIKTOK_PROFILE = "thestorylab204"
+TIKTOK_PROFILE = "epicweathermoments"
 VIDEO_GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 DEDUPE_DIR = pathlib.Path(os.environ.get("DEDUPE_DIR", "dedupe"))
 VIDEO_STATE_FILE = DEDUPE_DIR / os.environ.get("STATE_FILE", "state.json")
