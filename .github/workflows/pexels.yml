@@ -1,0 +1,214 @@
+name: FB Automation
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache ffmpeg
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: /usr/bin/ffmpeg
+          key: ffmpeg-${{ runner.os }}-v1
+
+      - name: Install ffmpeg (only if not cached)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Pick Random Caption
+        id: caption
+        run: |
+          CAPTIONS=(
+            "Nature's Beauty Live 🌿"
+            "Explore the World With Us 🌍"
+            "Breathtaking Views - Live Now"
+            "Where Nature Meets Peace 🌄"
+            "Live From Paradise on Earth"
+            "Discover Hidden Gems of Nature"
+            "Serenity in Every Frame 🌸"
+            "Wanderlust Diaries - Live"
+            "Nature's Best Kept Secrets"
+            "Escape Into Beauty - Live"
+          )
+          RANDOM_INDEX=$((RANDOM % ${#CAPTIONS[@]}))
+          echo "caption=${CAPTIONS[$RANDOM_INDEX]}" >> "$GITHUB_OUTPUT"
+
+      - name: Get Page Access Token
+        id: page_token
+        env:
+          PAGE_ID: ${{ secrets.PAGE_ID }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        run: |
+          RESPONSE=$(curl -s "https://graph.facebook.com/v19.0/${PAGE_ID}?fields=access_token&access_token=${ACCESS_TOKEN}")
+          PAGE_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+          if [ "$PAGE_TOKEN" == "null" ] || [ -z "$PAGE_TOKEN" ]; then
+            echo "ERROR: Page token nahi mila"
+            exit 1
+          fi
+          echo "::add-mask::$PAGE_TOKEN"
+          echo "page_token=$PAGE_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Create FB Live Video & Get Stream URL
+        id: create_live
+        env:
+          PAGE_ID: ${{ secrets.PAGE_ID }}
+          PAGE_TOKEN: ${{ steps.page_token.outputs.page_token }}
+          TITLE: ${{ steps.caption.outputs.caption }}
+        run: |
+          RESPONSE=$(curl -s -X POST "https://graph.facebook.com/v19.0/${PAGE_ID}/live_videos" \
+            -F "status=LIVE_NOW" \
+            -F "title=${TITLE}" \
+            -F "description=${TITLE}" \
+            -F "access_token=${PAGE_TOKEN}")
+          echo "API Response: $RESPONSE"
+          STREAM_URL=$(echo "$RESPONSE" | jq -r '.stream_url')
+          if [ "$STREAM_URL" == "null" ] || [ -z "$STREAM_URL" ]; then
+            echo "ERROR: stream_url nahi mila"
+            exit 1
+          fi
+          echo "::add-mask::$STREAM_URL"
+          echo "stream_url=$STREAM_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Start Streaming
+        run: |
+          ffmpeg -re -i video.mp4 \
+            -c:v libx264 -preset veryfast -maxrate 3000k -bufsize 6000k \
+            -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -ar 44100 \
+            -f flv "${{ steps.create_live.outputs.stream_url }}"
+
+  post-photo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Ensure dedupe file exists
+        run: touch used_photos.txt
+
+      - name: Pick Random Search Term
+        id: term
+        run: |
+          TERMS=("nature" "mountains" "waterfall" "forest" "beach" "sunset" "lake" "valley" "desert" "islands")
+          echo "term=${TERMS[$((RANDOM % ${#TERMS[@]}))]}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Unused Photo from Pexels
+        id: photo
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          QUERY: ${{ steps.term.outputs.term }}
+        run: |
+          RESPONSE=$(curl -s -H "Authorization: ${PEXELS_API_KEY}" \
+            "https://api.pexels.com/v1/search?query=${QUERY}&per_page=20&page=$((RANDOM % 5 + 1))")
+
+          COUNT=$(echo "$RESPONSE" | jq '.photos | length')
+          if [ "$COUNT" -eq 0 ]; then
+            echo "ERROR: Pexels se photos nahi mile"
+            exit 1
+          fi
+
+          FOUND=0
+          for i in $(seq 0 $((COUNT - 1))); do
+            PHOTO_ID=$(echo "$RESPONSE" | jq -r ".photos[$i].id")
+            if ! grep -qx "$PHOTO_ID" used_photos.txt; then
+              IMAGE_URL=$(echo "$RESPONSE" | jq -r ".photos[$i].src.large2x")
+              PHOTOGRAPHER=$(echo "$RESPONSE" | jq -r ".photos[$i].photographer")
+              echo "photo_id=$PHOTO_ID" >> "$GITHUB_OUTPUT"
+              echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
+              echo "photographer=$PHOTOGRAPHER" >> "$GITHUB_OUTPUT"
+              FOUND=1
+              break
+            fi
+          done
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "ERROR: Sab photos already use ho chuke is batch me, dusra term try karo"
+            exit 1
+          fi
+
+      - name: Download Photo
+        run: curl -s -o photo.jpg "${{ steps.photo.outputs.image_url }}"
+
+      - name: Build Caption with Hashtags
+        id: fullcaption
+        env:
+          TERM: ${{ steps.term.outputs.term }}
+        run: |
+          TITLES=(
+            "Nature's Beauty Untouched 🌿"
+            "Explore the World With Us 🌍"
+            "Breathtaking Views to Remember"
+            "Where Nature Meets Peace 🌄"
+            "A Slice of Paradise on Earth"
+            "Discover Hidden Gems of Nature"
+            "Serenity in Every Frame 🌸"
+            "Wanderlust Diaries"
+            "Nature's Best Kept Secrets"
+            "Escape Into Beauty"
+          )
+          TITLE="${TITLES[$((RANDOM % ${#TITLES[@]}))]}"
+
+          FULL_CAPTION="${TITLE}
+
+          #Nature #Travel #${TERM^} #Beautiful #Wanderlust"
+
+          echo "caption<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$FULL_CAPTION" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Get Page Access Token
+        id: page_token
+        env:
+          PAGE_ID: ${{ secrets.PAGE_ID }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        run: |
+          RESPONSE=$(curl -s "https://graph.facebook.com/v19.0/${PAGE_ID}?fields=access_token&access_token=${ACCESS_TOKEN}")
+          PAGE_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+          if [ "$PAGE_TOKEN" == "null" ] || [ -z "$PAGE_TOKEN" ]; then
+            echo "ERROR: Page token nahi mila"
+            exit 1
+          fi
+          echo "::add-mask::$PAGE_TOKEN"
+          echo "page_token=$PAGE_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Post Photo to Facebook Page
+        env:
+          PAGE_ID: ${{ secrets.PAGE_ID }}
+          PAGE_TOKEN: ${{ steps.page_token.outputs.page_token }}
+        run: |
+          RESPONSE=$(curl -s -X POST "https://graph.facebook.com/v19.0/${PAGE_ID}/photos" \
+            -F "source=@photo.jpg" \
+            -F "caption=${{ steps.fullcaption.outputs.caption }}" \
+            -F "access_token=${PAGE_TOKEN}")
+          echo "Post Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.id' > /dev/null || (echo "ERROR: Post fail hua"; exit 1)
+
+      - name: Update Dedupe File
+        run: echo "${{ steps.photo.outputs.photo_id }}" >> used_photos.txt
+
+      - name: Commit Dedupe File
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add used_photos.txt
+          git commit -m "Update used photos list" || echo "No changes to commit"
+          git push
+
+      - name: Cleanup
+        if: always()
+        run: rm -f photo.jpg
