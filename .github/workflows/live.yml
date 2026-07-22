@@ -1,0 +1,70 @@
+name: FB Live Stream
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # roz 6:00 AM UTC — apni timing ke hisaab se adjust karo
+  workflow_dispatch:
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg jq
+
+      - name: Pick Random Caption
+        id: caption
+        run: |
+          CAPTIONS=(
+            "Nature's Beauty Live 🌿"
+            "Explore the World With Us 🌍"
+            "Breathtaking Views - Live Now"
+            "Where Nature Meets Peace 🌄"
+            "Live From Paradise on Earth"
+            "Discover Hidden Gems of Nature"
+            "Serenity in Every Frame 🌸"
+            "Wanderlust Diaries - Live"
+            "Nature's Best Kept Secrets"
+            "Escape Into Beauty - Live"
+          )
+          RANDOM_INDEX=$((RANDOM % ${#CAPTIONS[@]}))
+          SELECTED="${CAPTIONS[$RANDOM_INDEX]}"
+          echo "Selected caption: $SELECTED"
+          echo "caption=$SELECTED" >> "$GITHUB_OUTPUT"
+
+      - name: Create FB Live Video & Get Stream URL
+        id: create_live
+        env:
+          PAGE_ID: ${{ secrets.PAGE_ID }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+          TITLE: ${{ steps.caption.outputs.caption }}
+        run: |
+          RESPONSE=$(curl -s -X POST "https://graph.facebook.com/v19.0/${PAGE_ID}/live_videos" \
+            -F "status=LIVE_NOW" \
+            -F "title=${TITLE}" \
+            -F "description=${TITLE}" \
+            -F "access_token=${ACCESS_TOKEN}")
+
+          echo "API Response: $RESPONSE"
+
+          STREAM_URL=$(echo "$RESPONSE" | jq -r '.stream_url')
+          VIDEO_ID=$(echo "$RESPONSE" | jq -r '.id')
+
+          if [ "$STREAM_URL" == "null" ] || [ -z "$STREAM_URL" ]; then
+            echo "ERROR: stream_url nahi mila"
+            exit 1
+          fi
+
+          echo "::add-mask::$STREAM_URL"
+          echo "stream_url=$STREAM_URL" >> "$GITHUB_OUTPUT"
+          echo "Live video created: $VIDEO_ID with caption: $TITLE"
+
+      - name: Start Streaming
+        run: |
+          ffmpeg -re -i video.mp4 \
+            -c:v libx264 -preset veryfast -maxrate 3000k -bufsize 6000k \
+            -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -ar 44100 \
+            -f flv "${{ steps.create_live.outputs.stream_url }}"
