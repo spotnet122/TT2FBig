@@ -87,7 +87,7 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TERM: ${{ steps.term.outputs.term }}
         run: |
-          PROMPT="Write a social media post for a nature/travel photo about ${TERM}. Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, then a blank line, then exactly 5 relevant hashtags separated by spaces each starting with hash symbol. No extra text, no explanation."
+          PROMPT="Write a social media post for a nature/travel photo about ${TERM} with full stop and related emoji. Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, then a blank line, then exactly 5 relevant hashtags separated by spaces each starting with hash symbol. No extra text, no explanation."
 
           BODY=$(jq -n --arg prompt "$PROMPT" '{
             model: "llama-3.3-70b-versatile",
@@ -276,7 +276,7 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TERM: ${{ steps.term.outputs.term }}
         run: |
-          PROMPT="Write a social media post for a nature/travel video about ${TERM}. Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, then a blank line, then exactly 5 relevant hashtags separated by spaces each starting with hash symbol. No extra text, no explanation."
+          PROMPT="Write a social media post for a nature/travel video about ${TERM} with full stop and related emoji. Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, then a blank line, then exactly 5 relevant hashtags separated by spaces each starting with hash symbol. No extra text, no explanation."
 
           BODY=$(jq -n --arg prompt "$PROMPT" '{
             model: "llama-3.3-70b-versatile",
