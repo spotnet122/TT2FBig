@@ -352,6 +352,23 @@ jobs:
             mv muted.mp4 video.mp4
           fi
 
+      - name: Install Watermark Font
+        if: steps.video.outputs.found == 'true'
+        run: sudo apt-get update && sudo apt-get install -y fonts-dejavu-core
+
+      - name: Add Text Watermark to Video
+        if: steps.video.outputs.found == 'true'
+        env:
+          WATERMARK_TEXT: ${{ vars.WATERMARK_TEXT }}
+        run: |
+          TEXT="${WATERMARK_TEXT:-Nature Unfiltered}"
+          ESCAPED_TEXT=$(printf '%s' "$TEXT" | sed "s/:/\\\\:/g; s/'/\\\\'/g")
+
+          ffmpeg -y -i video.mp4 \
+            -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='${ESCAPED_TEXT}':fontcolor=white@0.5:fontsize=h*0.02:borderw=2:bordercolor=black@0.4:x=(w-text_w)/2:y=h*0.74" \
+            -c:a copy watermarked.mp4
+          mv watermarked.mp4 video.mp4
+
       - name: Generate Caption via Groq
         if: steps.video.outputs.found == 'true'
         id: gencaption
