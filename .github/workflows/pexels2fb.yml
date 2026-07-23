@@ -116,7 +116,7 @@ jobs:
         run: |
           BODY=$(jq -n --arg desc "$DESC" --arg term "$TERM" '{
             model: "llama-3.3-70b-versatile",
-            messages: [{role: "user", content: ("Write a social media post for a nature/travel photo. The actual photo shows: " + $desc + ". Base the caption specifically on this description (fall back to the general theme \"" + $term + "\" only if the description is too vague). Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, ending with a full stop, and containing exactly one relevant emoji placed naturally wherever it fits best in the sentence, then a blank line, then exactly 5 SEO-optimised hashtags separated by spaces each starting with hash symbol, using a mix of broad popular tags and niche specific tags for maximum reach. No extra text, no explanation.")}],
+            messages: [{role: "user", content: ("You are writing a personal travel/nature blog caption in first-person voice, as if you personally took and are sharing this photo. The actual photo shows: " + $desc + ". Base the caption specifically on this description (fall back to the general theme \"" + $term + "\" only if the description is too vague). The caption must be an engagement hook: a relatable question or statement that makes people want to comment or react, written in a personal, conversational voice (not generic third-person marketing tone). Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, ending with a full stop, and containing exactly one relevant emoji placed naturally wherever it fits best in the sentence, then a blank line, then exactly 5 SEO-optimised hashtags separated by spaces each starting with hash symbol, using a mix of broad popular tags and niche specific tags for maximum reach. No extra text, no explanation.")}],
             temperature: 0.9
           }')
 
@@ -128,7 +128,7 @@ jobs:
           CAPTION=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
 
           if [ -z "$CAPTION" ] || [ "$CAPTION" == "null" ]; then
-            CAPTION=$'Nature\'s beauty captured in a single frame. \xf0\x9f\x8c\xbf\n\n#Nature #Travel #EarthPixel #HiddenGem #WanderlustDaily'
+            CAPTION=$'Anyone else stop everything when they see a view like this. \xf0\x9f\x8c\xbf\n\n#Nature #Travel #EarthPixel #HiddenGem #WanderlustDaily'
           fi
 
           echo "caption<<EOF" >> "$GITHUB_OUTPUT"
@@ -379,7 +379,7 @@ jobs:
         run: |
           BODY=$(jq -n --arg desc "$DESC" --arg term "$TERM" '{
             model: "llama-3.3-70b-versatile",
-            messages: [{role: "user", content: ("Write a social media post for a nature/travel video. The actual video shows: " + $desc + ". Base the caption specifically on this description (fall back to the general theme \"" + $term + "\" only if the description is too vague). Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, ending with a full stop, and containing exactly one relevant emoji placed naturally wherever it fits best in the sentence, then a blank line, then exactly 5 SEO-optimised hashtags separated by spaces each starting with hash symbol, using a mix of broad popular tags and niche specific tags for maximum reach. No extra text, no explanation.")}],
+            messages: [{role: "user", content: ("You are writing a personal travel/nature blog caption in first-person voice, as if you personally filmed and are sharing this video. The actual video shows: " + $desc + ". Base the caption specifically on this description (fall back to the general theme \"" + $term + "\" only if the description is too vague). The caption must be an engagement hook: a relatable question or statement that makes people want to comment or react, written in a personal, conversational voice (not generic third-person marketing tone). Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, ending with a full stop, and containing exactly one relevant emoji placed naturally wherever it fits best in the sentence, then a blank line, then exactly 5 SEO-optimised hashtags separated by spaces each starting with hash symbol, using a mix of broad popular tags and niche specific tags for maximum reach. No extra text, no explanation.")}],
             temperature: 0.9
           }')
 
@@ -391,7 +391,7 @@ jobs:
           CAPTION=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
 
           if [ -z "$CAPTION" ] || [ "$CAPTION" == "null" ]; then
-            CAPTION=$'Nature\'s beauty in motion. \xf0\x9f\x8e\xa5\n\n#Nature #Travel #ReelsDaily #ScenicView #WanderlustDaily'
+            CAPTION=$'Tell me you wouldn\'t drop everything to be here right now. \xf0\x9f\x8e\xa5\n\n#Nature #Travel #ReelsDaily #ScenicView #WanderlustDaily'
           fi
 
           echo "caption<<EOF" >> "$GITHUB_OUTPUT"
