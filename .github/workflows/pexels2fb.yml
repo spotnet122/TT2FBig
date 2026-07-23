@@ -31,11 +31,50 @@ jobs:
       - name: Ensure dedupe file exists
         run: touch used_photos.txt
 
-      - name: Pick Random Search Term
+      - name: Pick Next Topic (Round Robin)
         id: term
         run: |
-          TERMS=("nature" "mountains" "waterfall" "forest" "beach" "sunset" "sunrise" "lake" "river" "valley" "desert" "islands" "countryside" "national park" "ocean" "wildlife" "canyon" "cliff" "snow mountains" "rainforest" "tropical beach" "coastline" "clouds sky" "hiking trail" "camping" "road trip" "scenic view" "landscape" "aurora" "savanna")
-          echo "term=${TERMS[$((RANDOM % ${#TERMS[@]}))]}" >> "$GITHUB_OUTPUT"
+          NATURE_TERMS=("nature" "mountains" "waterfall" "forest" "beach" "sunset" "sunrise" "lake" "river" "valley" "desert" "islands" "countryside" "national park" "ocean" "wildlife" "canyon" "cliff" "snow mountains" "rainforest" "tropical beach" "coastline" "clouds sky" "hiking trail" "camping" "road trip" "scenic view" "landscape" "aurora" "savanna")
+          TRAVEL_TERMS=("city skyline" "old town street" "historic landmark" "backpacking" "train journey" "local market" "temple architecture" "cobblestone street" "solo traveler" "airport travel" "European streets")
+
+          STATE_FILE="photo_term_state.txt"
+          LAST_CATEGORY="travel"
+          NATURE_IDX=-1
+          TRAVEL_IDX=-1
+          if [ -f "$STATE_FILE" ]; then
+            # shellcheck disable=SC1090
+            source "$STATE_FILE" 2>/dev/null || true
+          fi
+
+          if [ "$LAST_CATEGORY" == "nature" ]; then
+            NEXT_CATEGORY="travel"
+            TRAVEL_IDX=$(( (TRAVEL_IDX + 1) % ${#TRAVEL_TERMS[@]} ))
+            TERM="${TRAVEL_TERMS[$TRAVEL_IDX]}"
+          else
+            NEXT_CATEGORY="nature"
+            NATURE_IDX=$(( (NATURE_IDX + 1) % ${#NATURE_TERMS[@]} ))
+            TERM="${NATURE_TERMS[$NATURE_IDX]}"
+          fi
+
+          echo "Picked: $TERM (category: $NEXT_CATEGORY)"
+          echo "term=$TERM" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "LAST_CATEGORY=$NEXT_CATEGORY"
+            echo "NATURE_IDX=$NATURE_IDX"
+            echo "TRAVEL_IDX=$TRAVEL_IDX"
+          } > "$STATE_FILE"
+
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add "$STATE_FILE"
+          git commit -m "Update photo term round-robin state" || echo "No changes to commit"
+          for i in 1 2 3 4 5; do
+            git push && break
+            echo "Push rejected, retrying with rebase (attempt $i)..."
+            git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" || true
+            sleep $((RANDOM % 5 + 1))
+          done
 
       - name: Fetch Unused Photo from Pexels
         id: photo
@@ -104,7 +143,13 @@ jobs:
 
       - name: Download Photo
         if: steps.photo.outputs.found == 'true'
-        run: curl -s -o photo.jpg "${{ steps.photo.outputs.image_url }}"
+        run: |
+          HTTP_CODE=$(curl -s -o photo.jpg -w "%{http_code}" "${{ steps.photo.outputs.image_url }}")
+          SIZE=$(stat -c%s photo.jpg 2>/dev/null || echo 0)
+          if [ "$HTTP_CODE" != "200" ] || [ "$SIZE" -lt 1000 ]; then
+            echo "ERROR: Photo download failed (HTTP $HTTP_CODE, size $SIZE bytes)"
+            exit 1
+          fi
 
       - name: Generate Caption via Groq
         if: steps.photo.outputs.found == 'true'
@@ -158,10 +203,11 @@ jobs:
         env:
           PAGE_ID: ${{ secrets.PAGE_ID }}
           PAGE_TOKEN: ${{ steps.page_token.outputs.page_token }}
+          CAPTION: ${{ steps.gencaption.outputs.caption }}
         run: |
           RESPONSE=$(curl -s -X POST "https://graph.facebook.com/v19.0/${PAGE_ID}/photos" \
             -F "source=@photo.jpg" \
-            -F "caption=${{ steps.gencaption.outputs.caption }}" \
+            -F "caption=${CAPTION}" \
             -F "access_token=${PAGE_TOKEN}")
           echo "Post Response: $RESPONSE"
           echo "$RESPONSE" | jq -e '.id' > /dev/null && echo "posted=true" >> "$GITHUB_OUTPUT" || echo "posted=false" >> "$GITHUB_OUTPUT"
@@ -177,7 +223,12 @@ jobs:
           git config user.email "actions@github.com"
           git add used_photos.txt
           git commit -m "Update used photos list" || echo "No changes to commit"
-          git push
+          for i in 1 2 3 4 5; do
+            git push && break
+            echo "Push rejected, retrying with rebase (attempt $i)..."
+            git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" || true
+            sleep $((RANDOM % 5 + 1))
+          done
 
       - name: Cleanup
         if: always()
@@ -195,8 +246,10 @@ jobs:
         id: cache-ffmpeg
         uses: actions/cache@v4
         with:
-          path: /usr/bin/ffmpeg
-          key: ffmpeg-${{ runner.os }}-v1
+          path: |
+            /usr/bin/ffmpeg
+            /usr/bin/ffprobe
+          key: ffmpeg-${{ runner.os }}-v2
 
       - name: Install ffmpeg (only if not cached)
         if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
@@ -208,11 +261,50 @@ jobs:
       - name: Ensure dedupe file exists
         run: touch used_videos.txt
 
-      - name: Pick Random Search Term
+      - name: Pick Next Topic (Round Robin)
         id: term
         run: |
-          TERMS=("nature" "mountains" "waterfall" "forest" "beach" "sunset" "sunrise" "lake" "river" "valley" "desert" "islands" "countryside" "national park" "ocean" "wildlife" "canyon" "cliff" "snow mountains" "rainforest" "tropical beach" "coastline" "clouds sky" "hiking trail" "camping" "road trip" "scenic view" "landscape" "aurora" "savanna")
-          echo "term=${TERMS[$((RANDOM % ${#TERMS[@]}))]}" >> "$GITHUB_OUTPUT"
+          NATURE_TERMS=("nature" "mountains" "waterfall" "forest" "beach" "sunset" "sunrise" "lake" "river" "valley" "desert" "islands" "countryside" "national park" "ocean" "wildlife" "canyon" "cliff" "snow mountains" "rainforest" "tropical beach" "coastline" "clouds sky" "hiking trail" "camping" "road trip" "scenic view" "landscape" "aurora" "savanna")
+          TRAVEL_TERMS=("city skyline" "old town street" "historic landmark" "backpacking" "train journey" "local market" "temple architecture" "cobblestone street" "solo traveler" "airport travel" "European streets")
+
+          STATE_FILE="video_term_state.txt"
+          LAST_CATEGORY="travel"
+          NATURE_IDX=-1
+          TRAVEL_IDX=-1
+          if [ -f "$STATE_FILE" ]; then
+            # shellcheck disable=SC1090
+            source "$STATE_FILE" 2>/dev/null || true
+          fi
+
+          if [ "$LAST_CATEGORY" == "nature" ]; then
+            NEXT_CATEGORY="travel"
+            TRAVEL_IDX=$(( (TRAVEL_IDX + 1) % ${#TRAVEL_TERMS[@]} ))
+            TERM="${TRAVEL_TERMS[$TRAVEL_IDX]}"
+          else
+            NEXT_CATEGORY="nature"
+            NATURE_IDX=$(( (NATURE_IDX + 1) % ${#NATURE_TERMS[@]} ))
+            TERM="${NATURE_TERMS[$NATURE_IDX]}"
+          fi
+
+          echo "Picked: $TERM (category: $NEXT_CATEGORY)"
+          echo "term=$TERM" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "LAST_CATEGORY=$NEXT_CATEGORY"
+            echo "NATURE_IDX=$NATURE_IDX"
+            echo "TRAVEL_IDX=$TRAVEL_IDX"
+          } > "$STATE_FILE"
+
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add "$STATE_FILE"
+          git commit -m "Update video term round-robin state" || echo "No changes to commit"
+          for i in 1 2 3 4 5; do
+            git push && break
+            echo "Push rejected, retrying with rebase (attempt $i)..."
+            git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" || true
+            sleep $((RANDOM % 5 + 1))
+          done
 
       - name: Fetch Unused Portrait Video from Pexels
         id: video
@@ -298,7 +390,12 @@ jobs:
       - name: Download Video
         if: steps.video.outputs.found == 'true'
         run: |
-          curl -s -L -o video_raw.mp4 "${{ steps.video.outputs.video_url }}"
+          HTTP_CODE=$(curl -s -L -o video_raw.mp4 -w "%{http_code}" "${{ steps.video.outputs.video_url }}")
+          SIZE=$(stat -c%s video_raw.mp4 2>/dev/null || echo 0)
+          if [ "$HTTP_CODE" != "200" ] || [ "$SIZE" -lt 10000 ]; then
+            echo "ERROR: Video download failed (HTTP $HTTP_CODE, size $SIZE bytes)"
+            exit 1
+          fi
           ls -lh video_raw.mp4 || true
 
       - name: Compress Only if Near FB API Limit
@@ -421,10 +518,11 @@ jobs:
         env:
           PAGE_ID: ${{ secrets.PAGE_ID }}
           PAGE_TOKEN: ${{ steps.page_token.outputs.page_token }}
+          CAPTION: ${{ steps.gencaption.outputs.caption }}
         run: |
           RESPONSE=$(curl -s -X POST "https://graph.facebook.com/v19.0/${PAGE_ID}/videos" \
             -F "source=@video.mp4" \
-            -F "description=${{ steps.gencaption.outputs.caption }}" \
+            -F "description=${CAPTION}" \
             -F "access_token=${PAGE_TOKEN}")
           echo "Post Response: $RESPONSE"
           echo "$RESPONSE" | jq -e '.id' > /dev/null && echo "posted=true" >> "$GITHUB_OUTPUT" || echo "posted=false" >> "$GITHUB_OUTPUT"
@@ -440,7 +538,12 @@ jobs:
           git config user.email "actions@github.com"
           git add used_videos.txt
           git commit -m "Update used videos list" || echo "No changes to commit"
-          git push
+          for i in 1 2 3 4 5; do
+            git push && break
+            echo "Push rejected, retrying with rebase (attempt $i)..."
+            git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" || true
+            sleep $((RANDOM % 5 + 1))
+          done
 
       - name: Cleanup
         if: always()
