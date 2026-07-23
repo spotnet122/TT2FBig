@@ -2,9 +2,9 @@ name: FB Content Automation
 
 on:
   schedule:
-    - cron: '0 13 * * *'
-    - cron: '0 23 * * *'
-    - cron: '0 17 * * *'
+    - cron: '30 2 * * *'   # Photo #1 - 8:00 AM IST
+    - cron: '30 12 * * *'  # Photo #2 - 6:00 PM IST
+    - cron: '30 22 * * *'  # Video - 4:00 AM IST (next day)
   workflow_dispatch:
     inputs:
       task:
@@ -45,6 +45,20 @@ jobs:
         run: |
           set +e
           QUERY_ENC=$(jq -rn --arg q "$QUERY" '$q|@uri')
+
+          match_topic() {
+            local text_lower query_lower w w_root
+            text_lower=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+            query_lower=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+            for w in $query_lower; do
+              w_root="${w%s}"
+              if [[ "$text_lower" == *"$w"* || "$text_lower" == *"$w_root"* ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
           FOUND=0
           for PAGE in 1 2 3 4 5; do
             RESPONSE=$(curl -s -H "Authorization: ${PEXELS_API_KEY}" \
@@ -60,10 +74,21 @@ jobs:
               if grep -qx "$PHOTO_ID" used_photos.txt; then
                 continue
               fi
+              PHOTO_ALT=$(echo "$RESPONSE" | jq -r ".photos[$i].alt")
+              if [ -z "$PHOTO_ALT" ] || [ "$PHOTO_ALT" == "null" ]; then
+                PHOTO_ALT="$QUERY"
+              fi
+              if ! match_topic "$PHOTO_ALT" "$QUERY"; then
+                echo "Skip $PHOTO_ID - alt '$PHOTO_ALT' topic se match nahi karta"
+                continue
+              fi
               IMAGE_URL=$(echo "$RESPONSE" | jq -r ".photos[$i].src.large2x")
               if [ -n "$IMAGE_URL" ] && [ "$IMAGE_URL" != "null" ]; then
                 echo "photo_id=$PHOTO_ID" >> "$GITHUB_OUTPUT"
                 echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
+                echo "photo_desc<<EOF" >> "$GITHUB_OUTPUT"
+                echo "$PHOTO_ALT" >> "$GITHUB_OUTPUT"
+                echo "EOF" >> "$GITHUB_OUTPUT"
                 FOUND=1
                 break 2
               fi
@@ -87,12 +112,11 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TERM: ${{ steps.term.outputs.term }}
+          DESC: ${{ steps.photo.outputs.photo_desc }}
         run: |
-          PROMPT="Write a social media post for a nature/travel photo about ${TERM}. Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, ending with a full stop, and containing exactly one relevant emoji placed naturally wherever it fits best in the sentence, then a blank line, then exactly 5 SEO-optimised hashtags separated by spaces each starting with hash symbol, using a mix of broad popular tags and niche specific tags for maximum reach. No extra text, no explanation."
-
-          BODY=$(jq -n --arg prompt "$PROMPT" '{
+          BODY=$(jq -n --arg desc "$DESC" --arg term "$TERM" '{
             model: "llama-3.3-70b-versatile",
-            messages: [{role: "user", content: $prompt}],
+            messages: [{role: "user", content: ("Write a social media post for a nature/travel photo. The actual photo shows: " + $desc + ". Base the caption specifically on this description (fall back to the general theme \"" + $term + "\" only if the description is too vague). Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, ending with a full stop, and containing exactly one relevant emoji placed naturally wherever it fits best in the sentence, then a blank line, then exactly 5 SEO-optimised hashtags separated by spaces each starting with hash symbol, using a mix of broad popular tags and niche specific tags for maximum reach. No extra text, no explanation.")}],
             temperature: 0.9
           }')
 
@@ -198,6 +222,22 @@ jobs:
         run: |
           set +e
           QUERY_ENC=$(jq -rn --arg q "$QUERY" '$q|@uri')
+
+          match_topic() {
+            local text_lower query_lower w w_root
+            text_lower=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+            query_lower=$(echo "$2" | tr '[:upper:]' '[:lower:]')
+            for w in $query_lower; do
+              w_root="${w%s}"
+              if [[ "$text_lower" == *"$w"* || "$text_lower" == *"$w_root"* ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          MIN_DUR=15
+          MAX_DUR=25
           FOUND=0
           for PAGE in 1 2 3 4 5; do
             RESPONSE=$(curl -s -H "Authorization: ${PEXELS_API_KEY}" \
@@ -214,6 +254,22 @@ jobs:
                 continue
               fi
 
+              DURATION=$(echo "$RESPONSE" | jq -r ".videos[$i].duration // empty")
+              if [ -z "$DURATION" ] || [ "$DURATION" -lt "$MIN_DUR" ] || [ "$DURATION" -gt "$MAX_DUR" ]; then
+                echo "Skip $VIDEO_ID - duration ${DURATION}s range (${MIN_DUR}-${MAX_DUR}s) se bahar"
+                continue
+              fi
+
+              PAGE_URL=$(echo "$RESPONSE" | jq -r ".videos[$i].url // empty")
+              SLUG=$(echo "$PAGE_URL" | sed -E 's#.*/video/##; s#/$##; s#-[0-9]+$##; s#-# #g')
+              if [ -z "$SLUG" ]; then
+                SLUG="$QUERY"
+              fi
+              if ! match_topic "$SLUG" "$QUERY"; then
+                echo "Skip $VIDEO_ID - slug '$SLUG' topic se match nahi karta"
+                continue
+              fi
+
               VIDEO_URL=$(echo "$RESPONSE" | jq -r "[.videos[$i].video_files[] | select(.height > .width and .width <= 1080)] | sort_by(.width) | reverse | .[0].link // empty")
 
               if [ -z "$VIDEO_URL" ] || [ "$VIDEO_URL" == "null" ]; then
@@ -223,6 +279,9 @@ jobs:
               if [ -n "$VIDEO_URL" ] && [ "$VIDEO_URL" != "null" ]; then
                 echo "video_id=$VIDEO_ID" >> "$GITHUB_OUTPUT"
                 echo "video_url=$VIDEO_URL" >> "$GITHUB_OUTPUT"
+                echo "video_desc<<EOF" >> "$GITHUB_OUTPUT"
+                echo "$SLUG" >> "$GITHUB_OUTPUT"
+                echo "EOF" >> "$GITHUB_OUTPUT"
                 FOUND=1
                 break 2
               fi
@@ -299,12 +358,11 @@ jobs:
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TERM: ${{ steps.term.outputs.term }}
+          DESC: ${{ steps.video.outputs.video_desc }}
         run: |
-          PROMPT="Write a social media post for a nature/travel video about ${TERM}. Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, ending with a full stop, and containing exactly one relevant emoji placed naturally wherever it fits best in the sentence, then a blank line, then exactly 5 SEO-optimised hashtags separated by spaces each starting with hash symbol, using a mix of broad popular tags and niche specific tags for maximum reach. No extra text, no explanation."
-
-          BODY=$(jq -n --arg prompt "$PROMPT" '{
+          BODY=$(jq -n --arg desc "$DESC" --arg term "$TERM" '{
             model: "llama-3.3-70b-versatile",
-            messages: [{role: "user", content: $prompt}],
+            messages: [{role: "user", content: ("Write a social media post for a nature/travel video. The actual video shows: " + $desc + ". Base the caption specifically on this description (fall back to the general theme \"" + $term + "\" only if the description is too vague). Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, ending with a full stop, and containing exactly one relevant emoji placed naturally wherever it fits best in the sentence, then a blank line, then exactly 5 SEO-optimised hashtags separated by spaces each starting with hash symbol, using a mix of broad popular tags and niche specific tags for maximum reach. No extra text, no explanation.")}],
             temperature: 0.9
           }')
 
