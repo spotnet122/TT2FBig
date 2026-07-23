@@ -458,7 +458,7 @@ jobs:
         env:
           WATERMARK_TEXT: ${{ vars.WATERMARK_TEXT }}
         run: |
-          TEXT="${WATERMARK_TEXT:-Nature Unfiltered}"
+          TEXT="${WATERMARK_TEXT:-Nature Unfiltered ©}"
           ESCAPED_TEXT=$(printf '%s' "$TEXT" | sed "s/:/\\\\:/g; s/'/\\\\'/g")
 
           ffmpeg -y -i video.mp4 \
