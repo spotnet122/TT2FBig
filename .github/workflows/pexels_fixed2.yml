@@ -1,0 +1,348 @@
+name: FB Content Automation
+
+on:
+  schedule:
+    - cron: '30 2 * * *'   # Photo #1 - 8:00 AM IST
+    - cron: '30 12 * * *'  # Photo #2 - 6:00 PM IST
+    - cron: '30 22 * * *'  # Video - 4:00 AM IST (next day)
+  workflow_dispatch:
+    inputs:
+      task:
+        description: 'Kya run karna hai'
+        type: choice
+        options: [photo, video, both]
+        default: both
+
+permissions:
+  contents: write
+
+jobs:
+  post-photo:
+    if: >
+      (github.event_name == 'workflow_dispatch' && (inputs.task == 'photo' || inputs.task == 'both')) ||
+      (github.event_name == 'schedule' && (github.event.schedule == '30 2 * * *' || github.event.schedule == '30 12 * * *'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Ensure dedupe file exists
+        run: touch used_photos.txt
+
+      - name: Pick Random Search Term
+        id: term
+        run: |
+          TERMS=("nature" "mountains" "waterfall" "forest" "beach" "sunset" "lake" "valley" "desert" "islands" "countryside" "national park")
+          echo "term=${TERMS[$((RANDOM % ${#TERMS[@]}))]}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Unused Photo from Pexels
+        id: photo
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          QUERY: ${{ steps.term.outputs.term }}
+        run: |
+          set +e
+          FOUND=0
+          for PAGE in 1 2 3 4 5; do
+            RESPONSE=$(curl -s -H "Authorization: ${PEXELS_API_KEY}" \
+              "https://api.pexels.com/v1/search?query=${QUERY}&per_page=20&page=${PAGE}")
+
+            COUNT=$(echo "$RESPONSE" | jq '.photos | length' 2>/dev/null)
+            if [ -z "$COUNT" ] || [ "$COUNT" == "null" ] || [ "$COUNT" -eq 0 ]; then
+              continue
+            fi
+
+            for i in $(seq 0 $((COUNT - 1))); do
+              PHOTO_ID=$(echo "$RESPONSE" | jq -r ".photos[$i].id")
+              if grep -qx "$PHOTO_ID" used_photos.txt; then
+                continue
+              fi
+              IMAGE_URL=$(echo "$RESPONSE" | jq -r ".photos[$i].src.large2x")
+              if [ -n "$IMAGE_URL" ] && [ "$IMAGE_URL" != "null" ]; then
+                echo "photo_id=$PHOTO_ID" >> "$GITHUB_OUTPUT"
+                echo "image_url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
+                FOUND=1
+                break 2
+              fi
+            done
+          done
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No unused photo mila - skipping gracefully"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download Photo
+        if: steps.photo.outputs.found == 'true'
+        run: curl -s -o photo.jpg "${{ steps.photo.outputs.image_url }}"
+
+      - name: Generate Caption via Groq
+        if: steps.photo.outputs.found == 'true'
+        id: gencaption
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TERM: ${{ steps.term.outputs.term }}
+        run: |
+          PROMPT="Write a social media post for a nature/travel photo about ${TERM}. Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, then a blank line, then exactly 5 relevant hashtags separated by spaces each starting with hash symbol. No extra text, no explanation."
+
+          BODY=$(jq -n --arg prompt "$PROMPT" '{
+            model: "llama-3.3-70b-versatile",
+            messages: [{role: "user", content: $prompt}],
+            temperature: 0.9
+          }')
+
+          RESPONSE=$(curl -s "https://api.groq.com/openai/v1/chat/completions" \
+            -H "Authorization: Bearer ${GROQ_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+
+          CAPTION=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
+
+          if [ -z "$CAPTION" ] || [ "$CAPTION" == "null" ]; then
+            CAPTION="Nature's beauty captured in a single frame. 🌿\n\n#Nature #Travel #Beautiful #Peaceful #Wanderlust"
+          fi
+
+          echo "caption<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CAPTION" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Get Page Access Token
+        if: steps.photo.outputs.found == 'true'
+        id: page_token
+        env:
+          PAGE_ID: ${{ secrets.PAGE_ID }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        run: |
+          RESPONSE=$(curl -s "https://graph.facebook.com/v19.0/${PAGE_ID}?fields=access_token&access_token=${ACCESS_TOKEN}")
+          PAGE_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+          if [ "$PAGE_TOKEN" == "null" ] || [ -z "$PAGE_TOKEN" ]; then
+            echo "ERROR: Page token nahi mila"
+            echo "page_token=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::add-mask::$PAGE_TOKEN"
+          echo "page_token=$PAGE_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Post Photo to Facebook Page
+        if: steps.photo.outputs.found == 'true' && steps.page_token.outputs.page_token != ''
+        id: postphoto
+        env:
+          PAGE_ID: ${{ secrets.PAGE_ID }}
+          PAGE_TOKEN: ${{ steps.page_token.outputs.page_token }}
+        run: |
+          RESPONSE=$(curl -s -X POST "https://graph.facebook.com/v19.0/${PAGE_ID}/photos" \
+            -F "source=@photo.jpg" \
+            -F "caption=${{ steps.gencaption.outputs.caption }}" \
+            -F "access_token=${PAGE_TOKEN}")
+          echo "Post Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.id' > /dev/null && echo "posted=true" >> "$GITHUB_OUTPUT" || echo "posted=false" >> "$GITHUB_OUTPUT"
+
+      - name: Update Dedupe File
+        if: steps.postphoto.outputs.posted == 'true'
+        run: echo "${{ steps.photo.outputs.photo_id }}" >> used_photos.txt
+
+      - name: Commit Dedupe File
+        if: steps.postphoto.outputs.posted == 'true'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add used_photos.txt
+          git commit -m "Update used photos list" || echo "No changes to commit"
+          git push
+
+      - name: Cleanup
+        if: always()
+        run: rm -f photo.jpg
+
+  post-video:
+    if: >
+      (github.event_name == 'workflow_dispatch' && (inputs.task == 'video' || inputs.task == 'both')) ||
+      (github.event_name == 'schedule' && github.event.schedule == '30 22 * * *')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache ffmpeg
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: /usr/bin/ffmpeg
+          key: ffmpeg-${{ runner.os }}-v1
+
+      - name: Install ffmpeg (only if not cached)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Ensure dedupe file exists
+        run: touch used_videos.txt
+
+      - name: Pick Random Search Term
+        id: term
+        run: |
+          TERMS=("nature" "mountains" "waterfall" "forest" "beach" "sunset" "ocean" "valley" "wildlife" "countryside")
+          echo "term=${TERMS[$((RANDOM % ${#TERMS[@]}))]}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch Unused Portrait Video from Pexels
+        id: video
+        env:
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          QUERY: ${{ steps.term.outputs.term }}
+        run: |
+          set +e
+          FOUND=0
+          for PAGE in 1 2 3 4 5; do
+            RESPONSE=$(curl -s -H "Authorization: ${PEXELS_API_KEY}" \
+              "https://api.pexels.com/videos/search?query=${QUERY}&orientation=portrait&per_page=15&page=${PAGE}")
+
+            COUNT=$(echo "$RESPONSE" | jq '.videos | length' 2>/dev/null)
+            if [ -z "$COUNT" ] || [ "$COUNT" == "null" ] || [ "$COUNT" -eq 0 ]; then
+              continue
+            fi
+
+            for i in $(seq 0 $((COUNT - 1))); do
+              VIDEO_ID=$(echo "$RESPONSE" | jq -r ".videos[$i].id")
+              if grep -qx "$VIDEO_ID" used_videos.txt; then
+                continue
+              fi
+
+              VIDEO_URL=$(echo "$RESPONSE" | jq -r "[.videos[$i].video_files[] | select(.height > .width and .width <= 1080)] | sort_by(.width) | reverse | .[0].link // empty")
+
+              if [ -z "$VIDEO_URL" ] || [ "$VIDEO_URL" == "null" ]; then
+                VIDEO_URL=$(echo "$RESPONSE" | jq -r "[.videos[$i].video_files[] | select(.height > .width)] | .[0].link // empty")
+              fi
+
+              if [ -n "$VIDEO_URL" ] && [ "$VIDEO_URL" != "null" ]; then
+                echo "video_id=$VIDEO_ID" >> "$GITHUB_OUTPUT"
+                echo "video_url=$VIDEO_URL" >> "$GITHUB_OUTPUT"
+                FOUND=1
+                break 2
+              fi
+            done
+          done
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No portrait video mila - skipping gracefully"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download Video
+        if: steps.video.outputs.found == 'true'
+        run: |
+          curl -s -L -o video_raw.mp4 "${{ steps.video.outputs.video_url }}"
+          ls -lh video_raw.mp4 || true
+
+      - name: Compress Only if Near FB API Limit
+        if: steps.video.outputs.found == 'true'
+        run: |
+          SIZE=$(stat -c%s video_raw.mp4)
+          LIMIT=$((950 * 1024 * 1024))
+          echo "Downloaded size: $SIZE bytes"
+
+          if [ "$SIZE" -le "$LIMIT" ]; then
+            echo "Under FB limit borderline, no compression needed"
+            mv video_raw.mp4 video.mp4
+          else
+            echo "Over borderline, compressing to fit under FB limit..."
+            DURATION=$(ffprobe -v error -show_entries format=duration -of csv=p=0 video_raw.mp4)
+            DURATION=${DURATION%.*}
+            if [ -z "$DURATION" ] || [ "$DURATION" -eq 0 ]; then DURATION=60; fi
+
+            TARGET_KB=$((900 * 1024 * 8))
+            BITRATE=$((TARGET_KB / DURATION))
+            if [ "$BITRATE" -lt 500 ]; then BITRATE=500; fi
+
+            ffmpeg -y -i video_raw.mp4 \
+              -c:v libx264 -preset veryfast -b:v ${BITRATE}k -maxrate ${BITRATE}k -bufsize $((BITRATE*2))k \
+              -vf "scale=min(1080\,iw):-2" \
+              -c:a aac -b:a 128k \
+              video.mp4 || mv video_raw.mp4 video.mp4
+
+            ls -lh video.mp4 || true
+          fi
+
+      - name: Generate Caption via Groq
+        if: steps.video.outputs.found == 'true'
+        id: gencaption
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          TERM: ${{ steps.term.outputs.term }}
+        run: |
+          PROMPT="Write a social media post for a nature/travel video about ${TERM}. Output STRICTLY in this format and nothing else: first line is exactly one short catchy sentence caption with no quotes, then a blank line, then exactly 5 relevant hashtags separated by spaces each starting with hash symbol. No extra text, no explanation."
+
+          BODY=$(jq -n --arg prompt "$PROMPT" '{
+            model: "llama-3.3-70b-versatile",
+            messages: [{role: "user", content: $prompt}],
+            temperature: 0.9
+          }')
+
+          RESPONSE=$(curl -s "https://api.groq.com/openai/v1/chat/completions" \
+            -H "Authorization: Bearer ${GROQ_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+
+          CAPTION=$(echo "$RESPONSE" | jq -r '.choices[0].message.content')
+
+          if [ -z "$CAPTION" ] || [ "$CAPTION" == "null" ]; then
+            CAPTION="Nature's beauty in motion. 🌍\n\n#Nature #Travel #Beautiful #Peaceful #Wanderlust"
+          fi
+
+          echo "caption<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CAPTION" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Get Page Access Token
+        if: steps.video.outputs.found == 'true'
+        id: page_token
+        env:
+          PAGE_ID: ${{ secrets.PAGE_ID }}
+          ACCESS_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        run: |
+          RESPONSE=$(curl -s "https://graph.facebook.com/v19.0/${PAGE_ID}?fields=access_token&access_token=${ACCESS_TOKEN}")
+          PAGE_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+          if [ "$PAGE_TOKEN" == "null" ] || [ -z "$PAGE_TOKEN" ]; then
+            echo "ERROR: Page token nahi mila"
+            echo "page_token=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::add-mask::$PAGE_TOKEN"
+          echo "page_token=$PAGE_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Post Video to Facebook Page
+        if: steps.video.outputs.found == 'true' && steps.page_token.outputs.page_token != ''
+        id: postvideo
+        env:
+          PAGE_ID: ${{ secrets.PAGE_ID }}
+          PAGE_TOKEN: ${{ steps.page_token.outputs.page_token }}
+        run: |
+          RESPONSE=$(curl -s -X POST "https://graph.facebook.com/v19.0/${PAGE_ID}/videos" \
+            -F "source=@video.mp4" \
+            -F "description=${{ steps.gencaption.outputs.caption }}" \
+            -F "access_token=${PAGE_TOKEN}")
+          echo "Post Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.id' > /dev/null && echo "posted=true" >> "$GITHUB_OUTPUT" || echo "posted=false" >> "$GITHUB_OUTPUT"
+
+      - name: Update Dedupe File
+        if: steps.postvideo.outputs.posted == 'true'
+        run: echo "${{ steps.video.outputs.video_id }}" >> used_videos.txt
+
+      - name: Commit Dedupe File
+        if: steps.postvideo.outputs.posted == 'true'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add used_videos.txt
+          git commit -m "Update used videos list" || echo "No changes to commit"
+          git push
+
+      - name: Cleanup
+        if: always()
+        run: rm -f video_raw.mp4 video.mp4
