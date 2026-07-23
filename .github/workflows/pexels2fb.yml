@@ -328,8 +328,8 @@ jobs:
             return 1
           }
 
-          MIN_DUR=15
-          MAX_DUR=25
+          MIN_DUR=10
+          MAX_DUR=30
           FOUND=0
           for PAGE in 1 2 3 4 5; do
             RESPONSE=$(curl -s -H "Authorization: ${PEXELS_API_KEY}" \
