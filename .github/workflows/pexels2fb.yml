@@ -365,7 +365,7 @@ jobs:
           ESCAPED_TEXT=$(printf '%s' "$TEXT" | sed "s/:/\\\\:/g; s/'/\\\\'/g")
 
           ffmpeg -y -i video.mp4 \
-            -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='${ESCAPED_TEXT}':fontcolor=white@0.5:fontsize=h*0.02:borderw=2:bordercolor=black@0.4:x=(w-text_w)/2:y=h*0.74" \
+            -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:text='${ESCAPED_TEXT}':fontcolor=white@0.3:fontsize=h*0.01:borderw=1:bordercolor=black@0.3:x=(w-text_w)/2:y=h*0.84" \
             -c:a copy watermarked.mp4
           mv watermarked.mp4 video.mp4
 
