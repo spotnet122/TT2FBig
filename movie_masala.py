@@ -67,7 +67,7 @@ TIKTOK_PROFILES = [
 BUFFER_API_KEY = os.environ.get("BUFFER_API_KEY", "")
 BUFFER_CHANNEL_ID = os.environ.get("BUFFER_CHANNEL_ID", "")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 MAX_VIDEOS = int(os.environ.get("MAX_VIDEOS", "1"))
 DEDUPE_DIR = pathlib.Path(os.environ.get("DEDUPE_DIR", "dedupe"))
 STATE_FILE = DEDUPE_DIR / os.environ.get("STATE_FILE", "state.json")
@@ -318,6 +318,8 @@ def generate_caption(original_caption, groq_key, model=GROQ_MODEL, max_words=15,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.7,
                 "max_tokens": 150,
+                "reasoning_effort": "low",
+                "reasoning_format": "hidden",
             },
             timeout=30,
         )
