@@ -357,9 +357,9 @@ jobs:
               if [ -z "$SLUG" ]; then
                 SLUG="$QUERY"
               fi
+              # Topic match loose kiya - ab sirf log ke liye check karte hain, reject nahi karte
               if ! match_topic "$SLUG" "$QUERY"; then
-                echo "Skip $VIDEO_ID - slug '$SLUG' topic se match nahi karta"
-                continue
+                echo "Note $VIDEO_ID - slug '$SLUG' topic se loosely match, phir bhi accept kar rahe"
               fi
 
               VIDEO_URL=$(echo "$RESPONSE" | jq -r "[.videos[$i].video_files[] | select(.height > .width and .width <= 1080)] | sort_by(.width) | reverse | .[0].link // empty")
