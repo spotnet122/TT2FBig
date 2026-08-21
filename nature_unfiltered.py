@@ -160,7 +160,7 @@ def upload_to_uguu(file_path):
 # TYPE "video" — TikTok repost from @naturevibes689
 # ===========================================================================
 
-TIKTOK_PROFILE = "epicweathermoments"
+TIKTOK_PROFILE = "pxscenery"
 VIDEO_GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 DEDUPE_DIR = pathlib.Path(os.environ.get("DEDUPE_DIR", "dedupe"))
 VIDEO_STATE_FILE = DEDUPE_DIR / os.environ.get("STATE_FILE", "state.json")
