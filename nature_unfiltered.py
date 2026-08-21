@@ -325,7 +325,7 @@ def generate_video_caption(original_caption, groq_key, model=VIDEO_GROQ_MODEL, m
         source_block = f"ORIGINAL CAPTION:\n{original_caption}"
 
     base_prompt = (
-        "You are a social media caption writer. You will be given the ORIGINAL "
+        "You are a social media caption writer for nature & travel reel post. You will be given the ORIGINAL "
         "caption from a TikTok video (any topic/niche — news, devotional, motivation, "
         "comedy, film clip, etc). Rewrite it for Facebook/Instagram in the SAME "
         "language/tone as the original (if it's Hindi/Hinglish, reply in Hindi/Hinglish; "
