@@ -2,8 +2,11 @@ name: Nature Unfiltered - Video (Buffer)
 
 on:
   schedule:
-    # UTC time. Video-only repost, once daily.
-    - cron: '0 13 * * *'
+    # UTC times spread across the day for global coverage — 4x daily
+    - cron: '0 1 * * *'    # ~6:30 AM IST
+    - cron: '0 7 * * *'    # ~12:30 PM IST
+    - cron: '0 13 * * *'   # ~6:30 PM IST
+    - cron: '0 19 * * *'   # ~12:30 AM IST
   workflow_dispatch: {}    # manual run
 
 permissions:
