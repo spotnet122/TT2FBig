@@ -264,9 +264,8 @@ def download_video(video_url, dest_path):
     opts = _ydl_opts(
         skip_download=False,
         outtmpl=str(dest_path),
-        format="bestvideo*+bestaudio/best",
-        format_sort=["res", "fps", "br"],
-        merge_output_format="mp4",
+        format="best[ext=mp4]/best",   # pre-muxed single-file formats only — no merge, no ffmpeg needed
+        format_sort=["res", "fps", "br"],  # among those, pick highest res/fps/bitrate
     )
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([video_url])
